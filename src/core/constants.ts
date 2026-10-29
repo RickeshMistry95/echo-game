@@ -40,5 +40,29 @@ export const COIN_MIN_START_DIST = 150;
 /** ...and not within this distance of any ghost start point. */
 export const COIN_GHOST_CLEAR = 40;
 
+/** Chain coins within this many ticks of each other to build a combo. */
+export const COMBO_WINDOW = 150;
+/** Every this many coins in a chain raises the multiplier by one. */
+export const COMBO_STEP = 3;
+export const COMBO_MAX_MULT = 5;
+
+/** Chance a coin appears on a future clone path instead of a safe spot, and what it pays. */
+export const RISKY_CHANCE = 0.3;
+export const RISKY_MULT = 3;
+
+/** A near miss gives a short burst of speed. */
+export const BOOST_TICKS = 40;
+export const BOOST_FACTOR = 1.35;
+
+/** A slow clone replays at this fraction of your speed. */
+export const SLOW_CLONE = 0.6;
+/** A flickering clone is solid for FLICKER_SOLID ticks of every FLICKER_PERIOD, and harmless in between. */
+export const FLICKER_PERIOD = 150;
+export const FLICKER_SOLID = 90;
+
+/** Round modifiers change your speed. */
+export const SWIFT_FACTOR = 1.3;
+export const SLUGGISH_FACTOR = 0.8;
+
 /** Daily #1 was the launch day. */
 export const DAILY_EPOCH = '2026-10-29';

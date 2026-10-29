@@ -47,3 +47,11 @@ Run `npm install` from Windows, not from a Linux shell, so `node_modules` matche
 - **One mode:** menu is Play, Stats, Settings, How to play. Every run uses the map seeded from today's local date (`dailyMapParams`), unlimited attempts, seed never shown. Internally the run mode is still `'daily'` so saves and a future daily leaderboard line up. Old screens (mode select, map preview, seed entry) are in `Archive/RemovedScreens_v1/`.
 - **Maps:** obstacles now come from symmetric templates (pillars, cross walls, blocks, lanes, grid, fortress, rooms with doorways, compass blocks, scatter), optionally layered. Fairness checks unchanged (gaps at least 3 player widths, one connected floor).
 - **Leaderboard (planned, not built):** global scores will need a server. Runs already record inputs per round (`roundInputs`) and the sim is deterministic, so a server can verify scores by replaying them. Add a server adapter behind the `Store` interface.
+
+## Update 2026-10-29 (gameplay twists)
+- **Combo:** chain coins within 2.5s; multiplier +1 per 3 coins, max x5. Chain bar and multiplier show in the HUD, coin pitch rises with the chain.
+- **Risky coins (red):** 30% of coins appear where a clone will be soon, triple pay.
+- **Round modifiers** (from round 2, fixed by map seed): double coins, swift (+30% speed), sluggish (-20% speed, double coins). Announced before the round.
+- **Clone kinds** (from clone 3, fixed by map seed): slow (violet), flicker (green, harmless while faint), mirror (pink, point-reflected). Rest are plain echoes.
+- **Near-miss boost:** +35% speed for 40 ticks. **Danger trail:** dashed line shows each clone ~0.8s ahead.
+- All of it is deterministic from the map seed and round, so server-side score verification still works. Tuning numbers are in `src/core/constants.ts`.

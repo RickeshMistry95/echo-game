@@ -1,5 +1,5 @@
 import { AudioEngine } from './audio/synth';
-import { ARENA, DT, ROUND_POINTS, ROUND_TICKS } from './core/constants';
+import { ARENA, COMBO_MAX_MULT, COMBO_STEP, COMBO_WINDOW, DT, ROUND_POINTS, ROUND_TICKS } from './core/constants';
 import {
   createRun,
   drainEvents,
@@ -7,6 +7,7 @@ import {
   restartRound,
   step,
   type Mode,
+  type Modifier,
   type RunState,
   type SimEvent,
 } from './core/sim';
@@ -58,6 +59,14 @@ const CLEAR_TIME = 0.6;
 const DYING_TIME = 0.45;
 const SLOW_MO = 0.35;
 const TUTORIAL_ROUNDS = 3;
+
+const MODIFIER_LABEL: Record<Modifier, string> = { normal: '', double: 'Double coins', swift: 'Swift', sluggish: 'Sluggish' };
+const MODIFIER_NOTE: Record<Modifier, string> = {
+  normal: '',
+  double: 'Double coins this round',
+  swift: 'Swift round: you are 30% faster, so your clone will be too',
+  sluggish: 'Sluggish round: you are slower, but coins pay double',
+};
 
 const TUTORIAL_TIPS = [
   'Move with WASD, the arrow keys, your mouse, or by dragging. Grab the amber coin before time runs out.',
@@ -126,8 +135,11 @@ export class Game {
   private hudGhostN = $('hud-ghost-n');
   private hudGhostWord = $('hud-ghost-word');
   private hudPoints = $('hud-points');
+  private hudCombo = $('hud-combo');
+  private hudComboText = $('hud-combo-text');
+  private hudComboBar = $('hud-combo-bar');
   private banner = $('banner');
-  private hudCache = { round: '', ghosts: '', points: '', low: false, taken: false };
+  private hudCache = { round: '', ghosts: '', points: '', low: false, taken: false, combo: '' };
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -277,7 +289,8 @@ export class Game {
     if (this.config?.mode === 'tutorial' && this.run) {
       this.setBanner(TUTORIAL_TIPS[Math.min(this.run.round, TUTORIAL_TIPS.length) - 1]);
     } else {
-      this.setBanner(null);
+      const note = this.run ? MODIFIER_NOTE[this.run.modifier] : '';
+      this.setBanner(note || null);
     }
   }
 
@@ -288,10 +301,18 @@ export class Game {
   private handleEvents(events: SimEvent[]): void {
     for (const ev of events) {
       if (ev.type === 'coin') {
-        this.effects.burst(ev.x, ev.y, COLORS.coin, 16, 150);
-        this.effects.ring(ev.x, ev.y, COLORS.coin, 50, 0.45);
-        if (ev.bonus > 0) this.effects.text(ev.x, ev.y - 14, `+${ev.bonus}`, COLORS.coin);
-        this.audio.coin();
+        const color = ev.risky ? COLORS.risky : COLORS.coin;
+        this.effects.burst(ev.x, ev.y, color, ev.risky ? 24 : 16, 150);
+        this.effects.ring(ev.x, ev.y, color, 50, 0.45);
+        if (ev.bonus > 0) this.effects.text(ev.x, ev.y - 14, `+${ev.bonus}`, color);
+        if (ev.multUp) {
+          this.effects.ring(ev.x, ev.y, '#ffffff', 95, 0.55);
+          this.effects.text(ev.x, ev.y - 34, `x${ev.mult}`, '#ffffff');
+          this.effects.addFlash(0.18);
+        }
+        this.audio.coin(ev.combo, ev.risky);
+      } else if (ev.type === 'comboLost') {
+        this.audio.comboLost();
       } else if (ev.type === 'near') {
         this.effects.burst(ev.x, ev.y, '#9fd0ff', 7, 90);
         this.audio.near();
@@ -421,6 +442,7 @@ export class Game {
           this.phase = 'playing';
           this.acc = 0;
           this.audio.tick(true);
+          if (this.config?.mode !== 'tutorial') this.setBanner(null);
         }
         this.updateHud(run);
         break;
@@ -482,7 +504,7 @@ export class Game {
 
   private updateHud(r: RunState): void {
     const c = this.hudCache;
-    const label = this.config?.mode === 'tutorial' ? `Tutorial ${r.round}/${TUTORIAL_ROUNDS}` : `Round ${r.round}`;
+    const label = this.config?.mode === 'tutorial' ? `Tutorial ${r.round}/${TUTORIAL_ROUNDS}` : `Round ${r.round}${MODIFIER_LABEL[r.modifier] ? ` · ${MODIFIER_LABEL[r.modifier]}` : ''}`;
     if (label !== c.round) {
       c.round = label;
       this.hudRound.textContent = label;
@@ -499,11 +521,19 @@ export class Game {
       c.taken = taken;
       this.hudCoin.classList.toggle('taken', taken);
     }
+    const mult = Math.min(COMBO_MAX_MULT, 1 + Math.floor(r.combo / COMBO_STEP));
+    const comboLabel = r.combo > 0 ? `x${mult}  chain ${r.combo}` : '';
+    if (comboLabel !== c.combo) {
+      c.combo = comboLabel;
+      this.hudComboText.textContent = comboLabel;
+      this.hudCombo.classList.toggle('on', r.combo > 0);
+    }
+    this.hudComboBar.style.transform = `scaleX(${r.combo > 0 ? Math.max(0, r.comboTimer / COMBO_WINDOW).toFixed(3) : 0})`;
     const ghosts = String(r.ghosts.length);
     if (ghosts !== c.ghosts) {
       c.ghosts = ghosts;
       this.hudGhostN.textContent = ghosts;
-      this.hudGhostWord.textContent = r.ghosts.length === 1 ? ' ghost' : ' ghosts';
+      this.hudGhostWord.textContent = r.ghosts.length === 1 ? ' clone' : ' clones';
     }
     const pts = String(r.points);
     if (pts !== c.points) {
@@ -532,6 +562,7 @@ export class Game {
         ghostTick: this.viewTick,
         player: null,
         coin: null,
+        coinRisky: false,
         killer: -1,
         time: this.time,
         countdown: null,
@@ -549,7 +580,7 @@ export class Game {
           const total = this.countdownTotal();
           const idx = Math.min(2, Math.floor((this.phaseT / total) * 3));
           countdown = String(3 - idx);
-          player = { x: run.x, y: run.y, shield: false };
+          player = { x: run.x, y: run.y, shield: false, boost: false };
           coin = run.coin;
           break;
         }
@@ -559,11 +590,12 @@ export class Game {
             x: run.prevX + (run.x - run.prevX) * alpha,
             y: run.prevY + (run.y - run.prevY) * alpha,
             shield: run.tick < 45,
+            boost: run.boostTicks > 0,
           };
           break;
         case 'roundclear':
           ghostTick = ROUND_TICKS - 1;
-          player = this.phaseT < 0.12 ? { x: run.x, y: run.y, shield: false } : null;
+          player = this.phaseT < 0.12 ? { x: run.x, y: run.y, shield: false, boost: false } : null;
           coin = null;
           break;
         case 'dying':
@@ -578,6 +610,7 @@ export class Game {
         ghostTick,
         player,
         coin,
+        coinRisky: run.coinRisky,
         killer: phase === 'dying' || phase === 'over' ? run.killer : -1,
         time: this.time,
         countdown,

@@ -152,9 +152,16 @@ export class AudioEngine {
     src.start();
   }
 
-  coin(): void {
-    this.tone(660, 0.09, 'sine', 0.35);
-    this.tone(990, 0.16, 'sine', 0.35, undefined, 0.07);
+  /** Pitch climbs a semitone per coin in the chain, up to an octave and a half. */
+  coin(combo = 1, risky = false): void {
+    const k = 2 ** (Math.min(Math.max(combo - 1, 0), 18) / 12);
+    this.tone(660 * k, 0.09, 'sine', 0.35);
+    this.tone(990 * k, 0.16, 'sine', 0.35, undefined, 0.07);
+    if (risky) this.tone(1480 * k, 0.2, 'triangle', 0.22, undefined, 0.12);
+  }
+
+  comboLost(): void {
+    this.tone(330, 0.18, 'sine', 0.16, 220);
   }
 
   near(): void {

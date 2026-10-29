@@ -150,7 +150,7 @@ describe('simulation', () => {
       step(s, ...towardCoin(s));
       if (s.coinsTotal > taken) {
         taken = s.coinsTotal;
-        expect(Math.hypot(s.coin.x - before.x, s.coin.y - before.y)).toBeGreaterThanOrEqual(150);
+        expect(Math.hypot(s.coin.x - before.x, s.coin.y - before.y)).toBeGreaterThanOrEqual(s.coinRisky ? 100 : 150);
       }
     }
     expect(taken).toBeGreaterThan(6);

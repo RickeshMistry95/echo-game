@@ -1,5 +1,5 @@
 import { ARENA, CENTER, COIN_R, GHOST_R, PLAYER_R } from '../core/constants';
-import { ghostPos } from '../core/sim';
+import { ghostKindFor, ghostPosK, ghostSolid, type GhostKind } from '../core/sim';
 import { SHAPE } from '../map/geometry';
 import type { GameMap, Point } from '../map/types';
 import type { Effects } from './effects';
@@ -13,6 +13,7 @@ export const COLORS = {
   player: '#ffffff',
   ghost: '93, 179, 255',
   ghostHC: '0, 240, 255',
+  risky: '#ff7a45',
   coin: '#ffb703',
   danger: '#ff5d73',
 };
@@ -27,8 +28,10 @@ export interface Scene {
   ghosts: Float32Array[];
   /** Fractional tick used to place ghosts. */
   ghostTick: number;
-  player: { x: number; y: number; shield: boolean } | null;
+  player: { x: number; y: number; shield: boolean; boost: boolean } | null;
   coin: Point | null;
+  /** The coin sits on a clone's future path and pays triple. */
+  coinRisky: boolean;
   /** Ghost to highlight in red, or -1. */
   killer: number;
   /** Seconds, for animations. */
@@ -113,14 +116,15 @@ export function drawArena(ctx: CanvasRenderingContext2D, map: GameMap, highContr
   ctx.restore();
 }
 
-function drawCoin(ctx: CanvasRenderingContext2D, coin: Point, time: number): void {
+function drawCoin(ctx: CanvasRenderingContext2D, coin: Point, time: number, risky: boolean): void {
+  const color = risky ? COLORS.risky : COLORS.coin;
   const spin = Math.abs(Math.cos(time * 2.6));
   const hw = Math.max(2, (COIN_R + 1) * spin);
   const hh = COIN_R + 3;
   ctx.save();
-  ctx.shadowColor = COLORS.coin;
-  ctx.shadowBlur = 14;
-  ctx.fillStyle = COLORS.coin;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = risky ? 22 : 14;
+  ctx.fillStyle = color;
   ctx.beginPath();
   ctx.moveTo(coin.x, coin.y - hh);
   ctx.lineTo(coin.x + hw, coin.y);
@@ -132,12 +136,34 @@ function drawCoin(ctx: CanvasRenderingContext2D, coin: Point, time: number): voi
   // Soft pulse so the coin is easy to find among ghosts.
   ctx.save();
   ctx.globalAlpha = 0.35 * (0.5 + 0.5 * Math.sin(time * 4));
-  ctx.strokeStyle = COLORS.coin;
+  ctx.strokeStyle = color;
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.arc(coin.x, coin.y, 18 + 3 * Math.sin(time * 4), 0, Math.PI * 2);
   ctx.stroke();
+  if (risky) {
+    ctx.globalAlpha = 0.55;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.arc(coin.x, coin.y, 27 + 3 * Math.sin(time * 6), 0, Math.PI * 2);
+    ctx.stroke();
+  }
   ctx.restore();
+}
+
+/** RGB triple per clone behaviour: echo blue, slow violet, flicker green, mirror pink. */
+function kindColor(kind: GhostKind, hc: boolean): string {
+  if (hc) return kind === 'echo' ? COLORS.ghostHC : kind === 'slow' ? '255, 255, 0' : kind === 'flicker' ? '0, 255, 120' : '255, 120, 255';
+  switch (kind) {
+    case 'slow':
+      return '182, 140, 255';
+    case 'flicker':
+      return '110, 235, 190';
+    case 'mirror':
+      return '255, 130, 200';
+    default:
+      return COLORS.ghost;
+  }
 }
 
 const tmp: Point = { x: 0, y: 0 };
@@ -158,17 +184,39 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene): void {
   }
 
   drawArena(ctx, map, hc);
-  if (scene.coin) drawCoin(ctx, scene.coin, scene.time);
+  if (scene.coin) drawCoin(ctx, scene.coin, scene.time, scene.coinRisky);
 
-  const rgb = hc ? COLORS.ghostHC : COLORS.ghost;
   const n = ghosts.length;
   for (let gi = 0; gi < n; gi++) {
     const g = ghosts[gi];
+    const kind = ghostKindFor(map.seed, gi);
+    const rgb = kindColor(kind, hc);
+    const solid = ghostSolid(kind, scene.ghostTick);
     const age = n - 1 - gi;
-    const alpha = Math.max(0.4, 1 - 0.06 * age);
-    ghostPos(g, scene.ghostTick, tmp);
+    const alpha = Math.max(0.4, 1 - 0.06 * age) * (solid ? 1 : 0.35);
+    ghostPosK(g, kind, scene.ghostTick, tmp);
     const gx = tmp.x;
     const gy = tmp.y;
+
+    // Where this clone is about to go: a dashed line fading out over the next second.
+    if (solid) {
+      let px = gx;
+      let py = gy;
+      ctx.lineCap = 'round';
+      ctx.lineWidth = 2 * vis;
+      ctx.setLineDash([3, 5]);
+      for (let k = 1; k <= 8; k++) {
+        ghostPosK(g, kind, scene.ghostTick + k * 6, tmp);
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(tmp.x, tmp.y);
+        ctx.strokeStyle = `rgba(${rgb}, ${0.4 * alpha * (1 - k / 9)})`;
+        ctx.stroke();
+        px = tmp.x;
+        py = tmp.y;
+      }
+      ctx.setLineDash([]);
+    }
 
     // Short fading tail so you can read each ghost's direction at a glance.
     ctx.beginPath();
@@ -176,7 +224,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene): void {
     for (let k = 1; k <= 6; k++) {
       const t = scene.ghostTick - k * 2;
       if (t < 0) break;
-      ghostPos(g, t, tmp);
+      ghostPosK(g, kind, t, tmp);
       ctx.lineTo(tmp.x, tmp.y);
     }
     ctx.lineCap = 'round';
@@ -193,6 +241,25 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene): void {
     ctx.lineWidth = (hc ? 3 : 2) * (isKiller ? 1.4 : 1);
     ctx.strokeStyle = isKiller ? COLORS.danger : `rgba(${rgb}, ${alpha})`;
     ctx.stroke();
+
+    if (kind === 'slow') {
+      // Slow clones wear a second ring.
+      ctx.beginPath();
+      ctx.arc(gx, gy, (GHOST_R + 4) * vis, 0, Math.PI * 2);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = `rgba(${rgb}, ${0.6 * alpha})`;
+      ctx.stroke();
+    } else if (kind === 'mirror') {
+      // Mirror clones have a cross hair.
+      ctx.beginPath();
+      ctx.moveTo(gx - 5 * vis, gy);
+      ctx.lineTo(gx + 5 * vis, gy);
+      ctx.moveTo(gx, gy - 5 * vis);
+      ctx.lineTo(gx, gy + 5 * vis);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = `rgba(${rgb}, ${0.8 * alpha})`;
+      ctx.stroke();
+    }
 
     if (isKiller) {
       ctx.beginPath();
@@ -213,6 +280,18 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene): void {
     ctx.arc(p.x, p.y, PLAYER_R * vis, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
+    if (p.boost) {
+      ctx.save();
+      ctx.globalAlpha = 0.6;
+      ctx.strokeStyle = '#9fffd8';
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = '#9fffd8';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, (PLAYER_R + 5) * vis, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
     if (p.shield) {
       ctx.save();
       ctx.globalAlpha = 0.5 + 0.4 * Math.sin(scene.time * 30);

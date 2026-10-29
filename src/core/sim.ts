@@ -1,8 +1,22 @@
-import { pushOut } from '../map/geometry';
+import { clearance, pushOut } from '../map/geometry';
 import type { GameMap, Point } from '../map/types';
+import { mix, mulberry32 } from './rng';
 import {
   ACCEL_K,
+  BOOST_FACTOR,
+  BOOST_TICKS,
+  CENTER,
   COIN_POINTS,
+  COMBO_MAX_MULT,
+  COMBO_STEP,
+  COMBO_WINDOW,
+  FLICKER_PERIOD,
+  FLICKER_SOLID,
+  RISKY_CHANCE,
+  RISKY_MULT,
+  SLOW_CLONE,
+  SLUGGISH_FACTOR,
+  SWIFT_FACTOR,
   COIN_GHOST_CLEAR,
   COIN_MIN_START_DIST,
   COIN_R,
@@ -28,9 +42,14 @@ import {
 export type Mode = 'classic' | 'daily' | 'seed' | 'practice' | 'tutorial';
 export type RunStatus = 'playing' | 'roundEnd' | 'dead';
 export type DeathCause = 'ghost';
+/** How a clone behaves. Echo is an exact replay; the others bend the rules a little. */
+export type GhostKind = 'echo' | 'slow' | 'flicker' | 'mirror';
+/** A twist applied to one round. */
+export type Modifier = 'normal' | 'double' | 'swift' | 'sluggish';
 
 export type SimEvent =
-  | { type: 'coin'; x: number; y: number; bonus: number }
+  | { type: 'coin'; x: number; y: number; bonus: number; combo: number; mult: number; multUp: boolean; risky: boolean }
+  | { type: 'comboLost' }
   | { type: 'near'; x: number; y: number }
   | { type: 'clear' }
   | { type: 'dead'; cause: DeathCause; x: number; y: number; ghost: number };
@@ -61,6 +80,15 @@ export interface RunState {
   roundInputs: Int8Array[];
   /** The coin on the field now. Taking it puts the next one out straight away. */
   coin: Point;
+  /** A risky coin sits on a future clone path and pays more. */
+  coinRisky: boolean;
+  /** Coins in the current chain, ticks left to extend it, and ticks of speed boost left. */
+  combo: number;
+  comboTimer: number;
+  boostTicks: number;
+  modifier: Modifier;
+  /** Behaviour of each clone in `ghosts`. */
+  ghostKinds: GhostKind[];
   /** Next index to try in map.coins, so the sequence is deterministic across the whole run. */
   coinCursor: number;
   /** Coins taken so far in the current round. */
@@ -101,6 +129,12 @@ export function createRun(map: GameMap, harmless = false): RunState {
     inputRec: new Int8Array(ROUND_TICKS * 2),
     roundInputs: [],
     coin: { x: 0, y: 0 },
+    coinRisky: false,
+    combo: 0,
+    comboTimer: 0,
+    boostTicks: 0,
+    modifier: 'normal',
+    ghostKinds: [],
     coinCursor: 0,
     coinsThisRound: 0,
     nearFlags: new Uint8Array(0),
@@ -136,7 +170,64 @@ export function ghostPos(g: Float32Array, t: number, out: Point): Point {
  * Next coin in the map's fixed list: far enough from where the player is now and clear of every ghost
  * as it stands at this tick. Falls back to the farthest candidate if nothing qualifies.
  */
+/** Behaviour of the i-th clone of a map. Derived from the map seed so replays agree. */
+export function ghostKindFor(seed: number, i: number): GhostKind {
+  if (i < 2) return 'echo';
+  const r = mulberry32(mix(seed, 7000 + i))();
+  if (r < 0.7) return 'echo';
+  if (r < 0.8) return 'slow';
+  if (r < 0.9) return 'flicker';
+  return 'mirror';
+}
+
+/** The twist for a round: round 1 is always plain, later rounds are sometimes different. */
+export function roundModifier(seed: number, round: number): Modifier {
+  if (round < 2) return 'normal';
+  const r = mulberry32(mix(seed, 8000 + round))();
+  if (r < 0.6) return 'normal';
+  if (r < 0.75) return 'double';
+  if (r < 0.9) return 'swift';
+  return 'sluggish';
+}
+
+/** Where a clone of the given kind is at a tick. */
+export function ghostPosK(g: Float32Array, kind: GhostKind, t: number, out: Point): Point {
+  ghostPos(g, kind === 'slow' ? t * SLOW_CLONE : t, out);
+  if (kind === 'mirror') {
+    out.x = 2 * CENTER - out.x;
+    out.y = 2 * CENTER - out.y;
+  }
+  return out;
+}
+
+/** Flickering clones are harmless for part of every cycle. */
+export function ghostSolid(kind: GhostKind, t: number): boolean {
+  return kind !== 'flicker' || t % FLICKER_PERIOD < FLICKER_SOLID;
+}
+
+function speedFactor(s: RunState): number {
+  let f = s.modifier === 'swift' ? SWIFT_FACTOR : s.modifier === 'sluggish' ? SLUGGISH_FACTOR : 1;
+  if (s.boostTicks > 0) f *= BOOST_FACTOR;
+  return f;
+}
+
+/** Sometimes put the next coin where a clone will be soon: worth more, and dangerous to grab. */
+function riskySpot(s: RunState, tick: number): Point | null {
+  if (s.ghosts.length === 0) return null;
+  const rng = mulberry32(mix(s.map.seed, 12000 + s.coinsTotal * 31 + s.round * 7919));
+  if (rng() >= RISKY_CHANCE) return null;
+  const gi = Math.floor(rng() * s.ghosts.length);
+  const when = Math.min(ROUND_TICKS - 1, tick + 60 + Math.floor(rng() * 90));
+  const p = ghostPosK(s.ghosts[gi], s.ghostKinds[gi], when, { x: 0, y: 0 });
+  if (clearance(s.map, p.x, p.y) < PLAYER_R * 3 - 4) return null;
+  if (Math.hypot(p.x - s.x, p.y - s.y) < 100) return null;
+  return p;
+}
+
 function pickCoin(s: RunState, tick: number): Point {
+  const risky = riskySpot(s, tick);
+  s.coinRisky = risky !== null;
+  if (risky) return risky;
   const coins = s.map.coins;
   let best = 0;
   let bestDist = -1;
@@ -151,8 +242,8 @@ function pickCoin(s: RunState, tick: number): Point {
     }
     if (d < COIN_MIN_START_DIST) continue;
     let blocked = false;
-    for (const g of s.ghosts) {
-      ghostPos(g, tick, gp);
+    for (let gi = 0; gi < s.ghosts.length; gi++) {
+      ghostPosK(s.ghosts[gi], s.ghostKinds[gi], tick, gp);
       if (Math.hypot(c.x - gp.x, c.y - gp.y) < COIN_GHOST_CLEAR) {
         blocked = true;
         break;
@@ -178,6 +269,9 @@ export function beginRound(s: RunState): void {
   s.vx = 0;
   s.vy = 0;
   s.coinsThisRound = 0;
+  s.modifier = s.harmless ? 'normal' : roundModifier(s.map.seed, s.round);
+  if (s.combo > 0) s.comboTimer = Math.max(s.comboTimer, COMBO_WINDOW);
+  s.boostTicks = 0;
   s.nearThisRound = 0;
   s.nearFlags = new Uint8Array(s.ghosts.length);
   s.rec = new Float32Array(ROUND_TICKS * 2);
@@ -228,8 +322,10 @@ export function step(s: RunState, ix: number, iy: number): void {
 
   s.prevX = s.x;
   s.prevY = s.y;
-  s.vx += (ux * SPEED - s.vx) * ACCEL_K;
-  s.vy += (uy * SPEED - s.vy) * ACCEL_K;
+  const f = speedFactor(s);
+  if (s.boostTicks > 0) s.boostTicks--;
+  s.vx += (ux * SPEED * f - s.vx) * ACCEL_K;
+  s.vy += (uy * SPEED * f - s.vy) * ACCEL_K;
   tmp.x = s.x + s.vx * DT;
   tmp.y = s.y + s.vy * DT;
   tmp.vx = s.vx;
@@ -248,16 +344,28 @@ export function step(s: RunState, ix: number, iy: number): void {
   if (Math.hypot(s.x - s.coin.x, s.y - s.coin.y) < PLAYER_R + COIN_R) {
     s.coinsThisRound++;
     s.coinsTotal++;
-    const bonus = COIN_POINTS;
+    s.combo++;
+    s.comboTimer = COMBO_WINDOW;
+    const mult = Math.min(COMBO_MAX_MULT, 1 + Math.floor(s.combo / COMBO_STEP));
+    const prevMult = Math.min(COMBO_MAX_MULT, 1 + Math.floor((s.combo - 1) / COMBO_STEP));
+    const worth = (s.modifier === 'double' || s.modifier === 'sluggish' ? 2 : 1) * (s.coinRisky ? RISKY_MULT : 1);
+    const bonus = COIN_POINTS * worth * mult;
     s.points += bonus;
-    s.events.push({ type: 'coin', x: s.coin.x, y: s.coin.y, bonus });
+    s.events.push({ type: 'coin', x: s.coin.x, y: s.coin.y, bonus, combo: s.combo, mult, multUp: mult > prevMult, risky: s.coinRisky });
     s.coin = pickCoin(s, t);
+  }
+
+  if (s.combo > 0 && --s.comboTimer <= 0) {
+    s.combo = 0;
+    s.events.push({ type: 'comboLost' });
   }
 
   // Ghost contact and near misses.
   const shield = t < SHIELD_TICKS;
   for (let gi = 0; gi < s.ghosts.length; gi++) {
-    ghostPos(s.ghosts[gi], t, gp);
+    const kind = s.ghostKinds[gi];
+    ghostPosK(s.ghosts[gi], kind, t, gp);
+    if (!ghostSolid(kind, t)) continue;
     const d = Math.hypot(s.x - gp.x, s.y - gp.y);
     if (shield) {
       if (d < NEAR_DIST) s.nearFlags[gi] = 1;
@@ -277,6 +385,7 @@ export function step(s: RunState, ix: number, iy: number): void {
         s.nearTotal++;
         if (s.nearThisRound < NEAR_CAP) s.points += NEAR_POINTS;
         s.nearThisRound++;
+        s.boostTicks = BOOST_TICKS;
         s.events.push({ type: 'near', x: (s.x + gp.x) / 2, y: (s.y + gp.y) / 2 });
       }
     } else if (d > NEAR_RESET) {
@@ -289,6 +398,7 @@ export function step(s: RunState, ix: number, iy: number): void {
     s.points += ROUND_POINTS;
     s.roundsCleared++;
     s.ghostsDodged += s.ghosts.length;
+    s.ghostKinds.push(ghostKindFor(s.map.seed, s.ghosts.length));
     s.ghosts.push(s.rec);
     s.roundInputs.push(s.inputRec);
     s.status = 'roundEnd';

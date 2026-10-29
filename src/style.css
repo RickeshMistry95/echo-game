@@ -116,6 +116,30 @@ canvas#game {
 #hud-timer-fill.low {
   background: var(--danger);
 }
+#hud-combo {
+  display: none;
+  position: relative;
+  padding: 2px 8px 5px;
+  border-radius: 8px;
+  background: rgba(255, 183, 3, 0.12);
+  color: var(--coin);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+#hud-combo.on {
+  display: inline-block;
+}
+#hud-combo-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--coin);
+  transform-origin: left center;
+}
 .coin-pip {
   color: var(--coin);
   opacity: 0.4;
