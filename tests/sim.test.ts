@@ -15,7 +15,6 @@ function playRound(s: RunState, path?: (s: RunState, t: number) => [number, numb
 }
 
 function towardCoin(s: RunState): [number, number] {
-  if (s.coinTaken) return [0, 0];
   const dx = s.coin.x - s.x;
   const dy = s.coin.y - s.y;
   const d = Math.hypot(dx, dy) || 1;
@@ -23,7 +22,7 @@ function towardCoin(s: RunState): [number, number] {
 }
 
 describe('simulation', () => {
-  it('clears a round by taking the coin, and the path becomes a ghost', () => {
+  it('clears a round, and the path becomes a ghost', () => {
     const s = createRun(map);
     playRound(s);
     expect(s.status).toBe('roundEnd');
@@ -32,12 +31,22 @@ describe('simulation', () => {
     expect(s.points).toBeGreaterThanOrEqual(100);
   });
 
-  it('standing still without the coin ends the run', () => {
+  it('a round with no coins still clears and adds a ghost', () => {
     const s = createRun(map);
     playRound(s, () => [0, 0]);
-    expect(s.status).toBe('dead');
-    expect(s.deathCause).toBe('coin');
-    expect(s.roundsCleared).toBe(0);
+    expect(s.status).toBe('roundEnd');
+    expect(s.roundsCleared).toBe(1);
+    expect(s.coinsTotal).toBe(0);
+    expect(s.ghosts).toHaveLength(1);
+  });
+
+  it('taking a coin puts a new one out straight away, so there can be many in one round', () => {
+    const s = createRun(map);
+    const first = { ...s.coin };
+    playRound(s);
+    expect(s.coinsThisRound).toBeGreaterThan(3);
+    expect(s.coinsTotal).toBe(s.coinsThisRound);
+    expect(s.coin).not.toEqual(first);
   });
 
   it('is deterministic: same inputs give the same run', () => {
@@ -132,15 +141,19 @@ describe('simulation', () => {
     }
   });
 
-  it('coin spawns far from the start and away from ghost starts', () => {
-    const s = createRun(map);
-    for (let r = 0; r < 6; r++) {
-      expect(Math.hypot(s.coin.x - s.startX, s.coin.y - s.startY)).toBeGreaterThanOrEqual(150);
-      playRound(s);
-      if (s.status !== 'roundEnd') break;
-      nextRound(s);
+  it('each new coin spawns far from where the player took the last one', () => {
+    const s = createRun(map, true);
+    let taken = s.coinsTotal;
+    for (let t = 0; t < ROUND_TICKS * 2; t++) {
+      if (t === ROUND_TICKS) nextRound(s);
+      const before = { x: s.x, y: s.y };
+      step(s, ...towardCoin(s));
+      if (s.coinsTotal > taken) {
+        taken = s.coinsTotal;
+        expect(Math.hypot(s.coin.x - before.x, s.coin.y - before.y)).toBeGreaterThanOrEqual(150);
+      }
     }
-    expect(s.roundsCleared).toBeGreaterThanOrEqual(4);
+    expect(taken).toBeGreaterThan(6);
   });
 
   it('beginRound resets the round without losing ghosts', () => {

@@ -1,6 +1,5 @@
 import { AudioEngine } from './audio/synth';
 import { ARENA, DT, ROUND_POINTS, ROUND_TICKS } from './core/constants';
-import { randomSeed } from './core/rng';
 import {
   createRun,
   drainEvents,
@@ -184,10 +183,6 @@ export class Game {
     return generateMap(config.seed, config.tier);
   }
 
-  static newClassicConfig(tier: Tier): RunConfig {
-    return { mode: 'classic', seed: randomSeed(), tier };
-  }
-
   async start(config: RunConfig): Promise<void> {
     if (this.pendingStart) return;
     this.pendingStart = true;
@@ -199,7 +194,7 @@ export class Game {
         await this.store.startDailyAttempt(config.date, code);
       }
       this.config = config;
-      this.run = createRun(map, config.mode === 'practice');
+      this.run = createRun(map, false);
       this.finished = false;
       this.replay = null;
       this.effects.clear();
@@ -327,8 +322,6 @@ export class Game {
       this.effects.burst(r.x, r.y, COLORS.danger, 26, 190);
       this.effects.ring(r.x, r.y, COLORS.danger, 80, 0.6);
       this.effects.addShake(10);
-    } else {
-      this.effects.ring(r.coin.x, r.coin.y, COLORS.danger, 70, 0.7);
     }
     this.effects.addFlash(0.4);
     this.audio.death();
@@ -391,9 +384,8 @@ export class Game {
       this.setBanner('Caught! Try that round again.');
       return;
     }
-    const cause = r.deathCause === 'coin' ? 'coin' : 'ghost';
     this.phase = 'over';
-    const info = await this.finishRun(cause);
+    const info = await this.finishRun('ghost');
     if (info) this.hooks.onGameOver(info);
   }
 
@@ -490,21 +482,22 @@ export class Game {
 
   private updateHud(r: RunState): void {
     const c = this.hudCache;
-    const label = this.config?.mode === 'practice' ? `Practice ${r.round}` : this.config?.mode === 'tutorial' ? `Tutorial ${r.round}/${TUTORIAL_ROUNDS}` : `Round ${r.round}`;
+    const label = this.config?.mode === 'tutorial' ? `Tutorial ${r.round}/${TUTORIAL_ROUNDS}` : `Round ${r.round}`;
     if (label !== c.round) {
       c.round = label;
       this.hudRound.textContent = label;
     }
     const left = 1 - r.tick / ROUND_TICKS;
     this.hudFill.style.transform = `scaleX(${Math.max(0, left).toFixed(4)})`;
-    const low = left < 0.3 && !r.coinTaken && !r.harmless;
+    const low = false;
     if (low !== c.low) {
       c.low = low;
       this.hudFill.classList.toggle('low', low);
     }
-    if (r.coinTaken !== c.taken) {
-      c.taken = r.coinTaken;
-      this.hudCoin.classList.toggle('taken', r.coinTaken);
+    const taken = r.coinsThisRound > 0;
+    if (taken !== c.taken) {
+      c.taken = taken;
+      this.hudCoin.classList.toggle('taken', taken);
     }
     const ghosts = String(r.ghosts.length);
     if (ghosts !== c.ghosts) {
@@ -549,7 +542,7 @@ export class Game {
     } else {
       let ghostTick = 0;
       let player: Scene['player'] = null;
-      let coin: Scene['coin'] = run.coinTaken ? null : run.coin;
+      let coin: Scene['coin'] = run.coin;
       let countdown: string | null = null;
       switch (phase) {
         case 'countdown': {

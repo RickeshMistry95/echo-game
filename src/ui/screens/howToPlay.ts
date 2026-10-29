@@ -15,9 +15,9 @@ export function howToPlayScreen(app: App, firstTime: boolean): ScreenInstance {
     h(
       'ol',
       { class: 'rules' },
-      h('li', null, 'Each round lasts 10 seconds. Grab the amber coin before the timer runs out.'),
+      h('li', null, 'Each round lasts 10 seconds. Grab the amber coin and a new one appears right away. Keep collecting.'),
       h('li', null, 'Your path from every round you survive comes back as a ghost, replaying your exact moves.'),
-      h('li', null, 'Touch a ghost and the run is over. Miss the coin and it is over too.'),
+      h('li', null, 'Touch a ghost and the run is over. A round with no coins is fine, you just earn fewer points.'),
       h('li', null, 'Each new round starts where the last one ended. Leave yourself room.'),
     ),
     h('p', { class: 'muted' }, 'Move with WASD or arrow keys, the mouse, or by dragging on a touch screen. Pause with Esc or P.'),
@@ -41,7 +41,7 @@ export function tutorialDoneScreen(app: App): ScreenInstance {
     h(
       'div',
       { class: 'menu' },
-      h('button', { class: 'btn primary', 'data-autofocus': true, onclick: () => void app.quitToMenu().then(() => app.showModeSelect()) }, 'Play'),
+      h('button', { class: 'btn primary', 'data-autofocus': true, onclick: () => void app.quitToMenu().then(() => app.play()) }, 'Play'),
       h('button', { class: 'btn ghost', onclick: toTitle }, 'Menu'),
     ),
   );

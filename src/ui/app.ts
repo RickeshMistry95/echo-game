@@ -1,17 +1,12 @@
-import { DAILY_ATTEMPTS } from '../core/constants';
 import { dailyMapParams, dailyNumber, localDate } from '../core/daily';
 import { Game, type GameOverInfo, type RunConfig } from '../game';
-import { encodeSeed } from '../map/seedcode';
 import type { SavedMode } from '../storage/schema';
-import type { App, DailyInfo, PreviewOptions } from './context';
+import type { App, TodayInfo } from './context';
 import type { Router } from './router';
 import { gameOverScreen } from './screens/gameOver';
 import { howToPlayScreen, tutorialDoneScreen } from './screens/howToPlay';
-import { mapPreviewScreen } from './screens/mapPreview';
-import { modeSelectScreen } from './screens/modeSelect';
 import { pauseScreen } from './screens/pause';
 import { replayScreen } from './screens/replay';
-import { seedEntryScreen } from './screens/seedEntry';
 import { settingsScreen } from './screens/settings';
 import { statsScreen } from './screens/stats';
 import { titleScreen } from './screens/title';
@@ -36,27 +31,18 @@ export function createApp(game: Game, store: Store, audio: AudioEngine, router: 
       toastTimer = window.setTimeout(() => toastEl.classList.remove('show'), 2200);
     },
 
-    daily(): DailyInfo {
+    today(): TodayInfo {
       const date = localDate();
-      const { seed, tier } = dailyMapParams(date);
       const day = store.dailyFor(date);
-      const used = day?.attempts ?? 0;
       return {
         date,
         number: dailyNumber(date),
-        seed,
-        tier,
-        code: encodeSeed(seed, tier),
-        attemptsUsed: used,
-        attemptsLeft: Math.max(0, DAILY_ATTEMPTS - used),
+        attempts: day?.attempts ?? 0,
         best: day && day.attempts > 0 ? { rounds: day.rounds, points: day.points } : null,
       };
     },
 
     showTitle: () => router.show(titleScreen(app)),
-    showModeSelect: () => router.show(modeSelectScreen(app)),
-    showMapPreview: (opts: PreviewOptions) => router.show(mapPreviewScreen(app, opts)),
-    showSeedEntry: () => router.show(seedEntryScreen(app)),
     showStats: () => router.show(statsScreen(app)),
     showSettings: (back) => router.show(settingsScreen(app, back)),
     showHowTo: (firstTime) => router.show(howToPlayScreen(app, firstTime)),
@@ -71,22 +57,10 @@ export function createApp(game: Game, store: Store, audio: AudioEngine, router: 
       else app.toast('No replay saved yet');
     },
 
-    startDaily(): void {
-      const d = app.daily();
-      const practice = d.attemptsLeft === 0;
-      app.showMapPreview({
-        mode: practice ? 'practice' : 'daily',
-        seed: d.seed,
-        tier: d.tier,
-        lockSeed: true,
-        lockTier: true,
-        title: `Daily #${d.number}`,
-        note: practice
-          ? 'You have used all attempts today, so this is practice and does not count.'
-          : `${d.attemptsLeft} of ${DAILY_ATTEMPTS} attempts left. Your best attempt counts.`,
-        date: d.date,
-        back: () => app.showTitle(),
-      });
+    async play(): Promise<void> {
+      const date = localDate();
+      const { seed, tier } = dailyMapParams(date);
+      await app.begin({ mode: 'daily', seed, tier, date });
     },
 
     startTutorial(): void {
@@ -109,24 +83,14 @@ export function createApp(game: Game, store: Store, audio: AudioEngine, router: 
       if (!c) return;
       router.hide();
       await game.quitToMenu();
-      if (c.mode === 'classic') await game.start(Game.newClassicConfig(c.tier));
-      else if (c.mode === 'daily') {
-        const left = app.daily().attemptsLeft > 0;
-        await game.start(left ? { ...c } : { mode: 'practice', seed: c.seed, tier: c.tier });
-      } else await game.start({ ...c });
+      await game.start({ ...c });
     },
 
-    async retry(info: GameOverInfo, sameMap: boolean): Promise<void> {
-      const c = info.config;
+    async retry(): Promise<void> {
+      const c = game.config;
+      if (!c) return;
       router.hide();
-      if (c.mode === 'classic') {
-        await game.start(sameMap ? { ...c } : Game.newClassicConfig(c.tier));
-      } else if (c.mode === 'daily') {
-        const left = app.daily().attemptsLeft > 0;
-        await game.start(left ? { ...c } : { mode: 'practice', seed: c.seed, tier: c.tier });
-      } else {
-        await game.start({ ...c });
-      }
+      await game.start({ ...c });
     },
 
     async quitToMenu(): Promise<void> {

@@ -41,3 +41,9 @@ Run `npm install` from Windows, not from a Linux shell, so `node_modules` matche
 ## Files
 - `Archive/EchoGame_ProjectSnapshot_v1.zip`: the zip the first build was delivered as (ignored by git).
 - `README.md`: how to play, scripts, structure.
+
+## Update 2026-10-29 (v2 direction)
+- **Gameplay:** coins chain (taking one spawns the next at once), a round with no coins is fine and still adds a clone, only touching a ghost ends the run. Flat 25 points per coin, 100 per round.
+- **One mode:** menu is Play, Stats, Settings, How to play. Every run uses the map seeded from today's local date (`dailyMapParams`), unlimited attempts, seed never shown. Internally the run mode is still `'daily'` so saves and a future daily leaderboard line up. Old screens (mode select, map preview, seed entry) are in `Archive/RemovedScreens_v1/`.
+- **Maps:** obstacles now come from symmetric templates (pillars, cross walls, blocks, lanes, grid, fortress, rooms with doorways, compass blocks, scatter), optionally layered. Fairness checks unchanged (gaps at least 3 player widths, one connected floor).
+- **Leaderboard (planned, not built):** global scores will need a server. Runs already record inputs per round (`roundInputs`) and the sim is deterministic, so a server can verify scores by replaying them. Add a server adapter behind the `Store` interface.

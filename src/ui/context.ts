@@ -2,29 +2,13 @@ import type { AudioEngine } from '../audio/synth';
 import type { Game, GameOverInfo, RunConfig } from '../game';
 import type { SavedMode } from '../storage/schema';
 import type { Store } from '../storage/store';
-import type { Tier } from '../map/types';
 import type { Router } from './router';
 
-export interface PreviewOptions {
-  mode: RunConfig['mode'];
-  seed: number;
-  tier: Tier;
-  lockSeed: boolean;
-  lockTier: boolean;
-  title: string;
-  note?: string;
-  date?: string;
-  back: () => void;
-}
-
-export interface DailyInfo {
+/** Today's board. The map seed is derived from the date and is never shown to the player. */
+export interface TodayInfo {
   date: string;
   number: number;
-  seed: number;
-  tier: Tier;
-  code: string;
-  attemptsUsed: number;
-  attemptsLeft: number;
+  attempts: number;
   best: { rounds: number; points: number } | null;
 }
 
@@ -35,11 +19,8 @@ export interface App {
   audio: AudioEngine;
   router: Router;
   toast(msg: string): void;
-  daily(): DailyInfo;
+  today(): TodayInfo;
   showTitle(): void;
-  showModeSelect(): void;
-  showMapPreview(opts: PreviewOptions): void;
-  showSeedEntry(): void;
   showStats(): void;
   showSettings(back: () => void): void;
   showHowTo(firstTime: boolean): void;
@@ -47,11 +28,11 @@ export interface App {
   showGameOver(info: GameOverInfo): void;
   showTutorialDone(): void;
   showReplay(mode: SavedMode): void;
-  startDaily(): void;
+  play(): Promise<void>;
   startTutorial(): void;
   begin(config: RunConfig): Promise<void>;
   resume(): void;
   restart(): Promise<void>;
-  retry(info: GameOverInfo, sameMap: boolean): Promise<void>;
+  retry(): Promise<void>;
   quitToMenu(): Promise<void>;
 }

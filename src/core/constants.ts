@@ -30,7 +30,8 @@ export const ACCEL_K = 0.2;
 export const SHIELD_TICKS = 45;
 
 export const ROUND_POINTS = 100;
-export const COIN_BONUS_MAX = 50;
+/** Every coin is worth the same; a new one appears the moment you take one. */
+export const COIN_POINTS = 25;
 export const NEAR_POINTS = 10;
 export const NEAR_CAP = 5;
 
@@ -39,6 +40,5 @@ export const COIN_MIN_START_DIST = 150;
 /** ...and not within this distance of any ghost start point. */
 export const COIN_GHOST_CLEAR = 40;
 
-export const DAILY_ATTEMPTS = 3;
 /** Daily #1 was the launch day. */
 export const DAILY_EPOCH = '2026-10-29';

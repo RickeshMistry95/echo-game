@@ -1,13 +1,9 @@
-import { DAILY_ATTEMPTS } from '../../core/constants';
-import { encodeSeed } from '../../map/seedcode';
-import { decodeSeed } from '../../map/seedcode';
-import type { RunRecord, SavedMode } from '../../storage/schema';
+import type { RunRecord } from '../../storage/schema';
 import { fmtDuration, fmtTime, h } from '../dom';
 import type { App } from '../context';
 import type { ScreenInstance } from '../router';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const MODE_LABEL: Record<SavedMode, string> = { classic: 'Classic', daily: 'Daily', seed: 'Seed' };
 
 function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>): SVGElementTagNameMap[K] {
   const el = document.createElementNS(SVG_NS, tag);
@@ -66,7 +62,7 @@ function when(iso: string): string {
 export function statsScreen(app: App): ScreenInstance {
   const d = app.store.data;
   const back = (): void => app.showTitle();
-  const daily = app.daily();
+  const daily = app.today();
   const today = d.daily[daily.date];
 
   const tile = (value: string, label: string) =>
@@ -75,8 +71,8 @@ export function statsScreen(app: App): ScreenInstance {
   const tiles = h(
     'div',
     { class: 'tiles' },
-    tile(String(d.bests.classic.rounds), 'best rounds (Classic)'),
-    tile(today && today.attempts > 0 ? `${today.rounds}` : '-', `Daily #${daily.number} (${today?.attempts ?? 0}/${DAILY_ATTEMPTS} used)`),
+    tile(String(d.bests.daily.rounds), 'best clones'),
+    tile(today && today.attempts > 0 ? `${today.rounds}` : '-', `today (#${daily.number}, ${today?.attempts ?? 0} runs)`),
     tile(String(d.streak.current), `day streak (best ${d.streak.longest})`),
   );
 
@@ -99,47 +95,22 @@ export function statsScreen(app: App): ScreenInstance {
     ].map(([label, value]) => h('div', { class: 'life-item' }, h('span', { class: 'life-value' }, String(value)), h('span', { class: 'life-label' }, String(label)))),
   );
 
-  const replays = (['classic', 'daily', 'seed'] as const)
-    .filter((m) => (d.replays[m]?.ghosts.length ?? 0) > 0)
-    .map((m) =>
-      h(
-        'button',
-        { class: 'btn', onclick: () => app.showReplay(m) },
-        `Watch best ${MODE_LABEL[m]} run (${d.replays[m]?.rounds} rounds)`,
-      ),
-    );
+  const replays =
+    (d.replays.daily?.ghosts.length ?? 0) > 0
+      ? [h('button', { class: 'btn', onclick: () => app.showReplay('daily') }, `Watch best run (${d.replays.daily?.rounds} clones)`)]
+      : [];
 
   const list = d.runs
     .slice(-20)
     .reverse()
-    .map((r) => {
-      const parsed = decodeSeed(r.code);
-      return h(
+    .map((r) =>
+      h(
         'li',
         { class: 'run' },
-        h('div', { class: 'run-main' }, h('strong', null, `${r.rounds} round${r.rounds === 1 ? '' : 's'}`), h('span', { class: 'muted' }, ` ${r.points} pts, ${MODE_LABEL[r.mode]}, ${fmtTime(r.ms)}`)),
-        h('div', { class: 'run-sub muted small' }, when(r.at), '  ', h('code', null, r.code || encodeSeed(0, r.tier))),
-        parsed
-          ? h(
-              'button',
-              {
-                class: 'btn small',
-                onclick: () =>
-                  app.showMapPreview({
-                    mode: 'seed',
-                    seed: parsed.seed,
-                    tier: parsed.tier,
-                    lockSeed: true,
-                    lockTier: true,
-                    title: 'Play this map',
-                    back: () => app.showStats(),
-                  }),
-              },
-              'Play this map',
-            )
-          : null,
-      );
-    });
+        h('div', { class: 'run-main' }, h('strong', null, `${r.rounds} clone${r.rounds === 1 ? '' : 's'}`), h('span', { class: 'muted' }, ` ${r.points} pts, ${fmtTime(r.ms)}`)),
+        h('div', { class: 'run-sub muted small' }, when(r.at)),
+      ),
+    );
 
   const el = h(
     'div',

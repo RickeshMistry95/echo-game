@@ -2,7 +2,7 @@ import { pushOut } from '../map/geometry';
 import type { GameMap, Point } from '../map/types';
 import {
   ACCEL_K,
-  COIN_BONUS_MAX,
+  COIN_POINTS,
   COIN_GHOST_CLEAR,
   COIN_MIN_START_DIST,
   COIN_R,
@@ -27,7 +27,7 @@ import {
 
 export type Mode = 'classic' | 'daily' | 'seed' | 'practice' | 'tutorial';
 export type RunStatus = 'playing' | 'roundEnd' | 'dead';
-export type DeathCause = 'ghost' | 'coin';
+export type DeathCause = 'ghost';
 
 export type SimEvent =
   | { type: 'coin'; x: number; y: number; bonus: number }
@@ -37,7 +37,7 @@ export type SimEvent =
 
 export interface RunState {
   map: GameMap;
-  /** Practice and tutorial runs: ghosts cannot hurt you and a missed coin is fine. */
+  /** Practice and tutorial runs: ghosts cannot hurt you. */
   harmless: boolean;
   /** 1 based number of the round being played. */
   round: number;
@@ -59,8 +59,12 @@ export interface RunState {
   inputRec: Int8Array;
   /** Inputs of every cleared round, for later verification. */
   roundInputs: Int8Array[];
+  /** The coin on the field now. Taking it puts the next one out straight away. */
   coin: Point;
-  coinTaken: boolean;
+  /** Next index to try in map.coins, so the sequence is deterministic across the whole run. */
+  coinCursor: number;
+  /** Coins taken so far in the current round. */
+  coinsThisRound: number;
   nearFlags: Uint8Array;
   nearThisRound: number;
   points: number;
@@ -97,7 +101,8 @@ export function createRun(map: GameMap, harmless = false): RunState {
     inputRec: new Int8Array(ROUND_TICKS * 2),
     roundInputs: [],
     coin: { x: 0, y: 0 },
-    coinTaken: false,
+    coinCursor: 0,
+    coinsThisRound: 0,
     nearFlags: new Uint8Array(0),
     nearThisRound: 0,
     points: 0,
@@ -127,28 +132,40 @@ export function ghostPos(g: Float32Array, t: number, out: Point): Point {
   return out;
 }
 
-function pickCoin(s: RunState): Point {
+/**
+ * Next coin in the map's fixed list: far enough from where the player is now and clear of every ghost
+ * as it stands at this tick. Falls back to the farthest candidate if nothing qualifies.
+ */
+function pickCoin(s: RunState, tick: number): Point {
   const coins = s.map.coins;
-  let fallback = coins[(s.round - 1) % coins.length];
-  let fallbackDist = -1;
+  let best = 0;
+  let bestDist = -1;
+  let chosen = -1;
   for (let k = 0; k < coins.length; k++) {
-    const c = coins[(s.round - 1 + k) % coins.length];
-    const dStart = Math.hypot(c.x - s.startX, c.y - s.startY);
-    if (dStart > fallbackDist) {
-      fallbackDist = dStart;
-      fallback = c;
+    const i = (s.coinCursor + k) % coins.length;
+    const c = coins[i];
+    const d = Math.hypot(c.x - s.x, c.y - s.y);
+    if (d > bestDist) {
+      bestDist = d;
+      best = i;
     }
-    if (dStart < COIN_MIN_START_DIST) continue;
+    if (d < COIN_MIN_START_DIST) continue;
     let blocked = false;
     for (const g of s.ghosts) {
-      if (Math.hypot(c.x - g[0], c.y - g[1]) < COIN_GHOST_CLEAR) {
+      ghostPos(g, tick, gp);
+      if (Math.hypot(c.x - gp.x, c.y - gp.y) < COIN_GHOST_CLEAR) {
         blocked = true;
         break;
       }
     }
-    if (!blocked) return c;
+    if (!blocked) {
+      chosen = i;
+      break;
+    }
   }
-  return fallback;
+  const idx = chosen >= 0 ? chosen : best;
+  s.coinCursor = (idx + 1) % coins.length;
+  return coins[idx];
 }
 
 /** Set up the current round: player at the start point, fresh recording, this round's coin. */
@@ -160,12 +177,12 @@ export function beginRound(s: RunState): void {
   s.prevY = s.y;
   s.vx = 0;
   s.vy = 0;
-  s.coinTaken = false;
+  s.coinsThisRound = 0;
   s.nearThisRound = 0;
   s.nearFlags = new Uint8Array(s.ghosts.length);
   s.rec = new Float32Array(ROUND_TICKS * 2);
   s.inputRec = new Int8Array(ROUND_TICKS * 2);
-  s.coin = pickCoin(s);
+  s.coin = pickCoin(s, 0);
   s.status = 'playing';
   s.deathCause = null;
   s.killer = -1;
@@ -228,12 +245,13 @@ export function step(s: RunState, ix: number, iy: number): void {
   s.playTicks++;
 
   // Coin pickup.
-  if (!s.coinTaken && Math.hypot(s.x - s.coin.x, s.y - s.coin.y) < PLAYER_R + COIN_R) {
-    s.coinTaken = true;
+  if (Math.hypot(s.x - s.coin.x, s.y - s.coin.y) < PLAYER_R + COIN_R) {
+    s.coinsThisRound++;
     s.coinsTotal++;
-    const bonus = Math.round((COIN_BONUS_MAX * (ROUND_TICKS - t)) / ROUND_TICKS);
+    const bonus = COIN_POINTS;
     s.points += bonus;
     s.events.push({ type: 'coin', x: s.coin.x, y: s.coin.y, bonus });
+    s.coin = pickCoin(s, t);
   }
 
   // Ghost contact and near misses.
@@ -268,20 +286,13 @@ export function step(s: RunState, ix: number, iy: number): void {
 
   s.tick = t + 1;
   if (s.tick >= ROUND_TICKS) {
-    if (s.coinTaken || s.harmless) {
-      s.points += ROUND_POINTS;
-      s.roundsCleared++;
-      s.ghostsDodged += s.ghosts.length;
-      s.ghosts.push(s.rec);
-      s.roundInputs.push(s.inputRec);
-      s.status = 'roundEnd';
-      s.events.push({ type: 'clear' });
-    } else {
-      s.status = 'dead';
-      s.deathCause = 'coin';
-      s.killer = -1;
-      s.events.push({ type: 'dead', cause: 'coin', x: s.x, y: s.y, ghost: -1 });
-    }
+    s.points += ROUND_POINTS;
+    s.roundsCleared++;
+    s.ghostsDodged += s.ghosts.length;
+    s.ghosts.push(s.rec);
+    s.roundInputs.push(s.inputRec);
+    s.status = 'roundEnd';
+    s.events.push({ type: 'clear' });
   }
 }
 
