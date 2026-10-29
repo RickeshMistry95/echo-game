@@ -3,7 +3,7 @@
 **Owner:** Rickesh Mistry
 **Started:** 2026-10-29
 **Code lives in:** this folder (`Outputs/Echo Game/`), which is also the git repo (one commit on `main` so far).
-**Repo on GitHub:** https://github.com/RickeshMistry95/echo-game (private, pushed 2026-10-29). Pages not enabled yet; private-repo Pages needs a paid plan.
+**Repo on GitHub:** https://github.com/RickeshMistry95/echo-game (public). **Live:** https://rickeshmistry95.github.io/echo-game/ (Pages via GitHub Actions, deploys on every push to main).
 **Plan doc:** https://claude.ai/artifact/X9UwQxjfxAhTM5iQ5vj51q (full design plan: rules, maps, screens, saving, controls, build phases)
 
 ## What it is
